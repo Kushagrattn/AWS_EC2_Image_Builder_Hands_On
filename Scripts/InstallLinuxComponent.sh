@@ -13,3 +13,5 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -m ec2 -a 
 
 # # Cleanup installer
 rm -f config.json
+
+# sudo systemctl stop amazon-cloudwatch-agent
