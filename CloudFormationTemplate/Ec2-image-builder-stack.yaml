@@ -132,6 +132,9 @@ Resources:
           AmiDistributionConfiguration:
             Name: amazon-linux2023-x86-{{ imagebuilder:buildDate }}
             Description: The Amazon Linux 2023 AMI comes pre-installed with the CloudWatch Agent.
+            LaunchPermissionConfiguration:
+              UserIds:
+                - 'xxxxxxxxxxxx'
             AmiTags:
               Team: Platform
               SourceAccountID: !Ref AWS::AccountId
