@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Image Builder for custom EC2 AMI
+Parameters:
+  InstanceProfileName:
+    Type: String
+    Description: Name of the existing IAM instance profile to use with EC2 Image Builder
+    Default: <Role Instance Profile Name>
+  ExistingKmsKeyId:
+    Type: String
+    Description: ARN or ID of an existing KMS key to encrypt the AMI volume and for distribution
+    Default: arn:aws:kms:<region>:<Account-ID>:key/<KeyID>
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet where EC2 Image Builder instances will run
+    Default: subnet-XXXX
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group to associate with EC2 Image Builder instances
+    Default: sg-XXXX
+  ParentImageArn:
+    Type: String
+    Description: ARN of the latest Amazon Linux 3 x86 image
+    Default: arn:aws:imagebuilder:<region>:aws:image/amazon-linux-2023-x86/x.x.x  # x.x.x means it'll pick latest patched aws-managed AMI.
+
+Resources:
+  InstallComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: InstallComponent-Linux3
+      Platform: Linux
+      Version: 1.0.1
+      Description: Installs packages
+      ChangeDescription: Initial version
+      Tags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
+      Data: |
+        name: InstallComponent-Linux3
+        description: Install packages
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: Install
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - aws s3 cp s3://<bucket-name>/demo/InstallLinuxComponent.sh .
+                    - chmod +x InstallLinuxComponent.sh
+                    - ./InstallLinuxComponent.sh
+                    - rm -f InstallLinuxComponent.sh
+  BuildTestingComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: TestComponent-Linux3
+      Platform: Linux
+      Version: 1.0.1
+      Description: Runs the BuildTesting script
+      ChangeDescription: Initial BuildTesting component
+      Tags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
+      Data: |
+        name: TestComponent-Linux3
+        description: Run BuildTesting script from S3
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: RunBuildTestingScript
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - set -e
+                    - aws s3 cp s3://<bucket-name>/demo/BuildTesting.sh .
+                    - chmod +x BuildTesting.sh
+                    - ./BuildTesting.sh
+                    - rm -f BuildTesting.sh
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: ImageRecipe-Linux3
+      Version: 1.0.1
+      Description: Image recipe
+      ParentImage: !Ref ParentImageArn
+      WorkingDirectory: /home/ec2-user
+      Components:
+        - ComponentArn: !Ref InstallComponent
+        - ComponentArn: !Ref BuildTestingComponent
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            KmsKeyId: !Ref ExistingKmsKeyId
+            Encrypted: true
+            Iops: 3000
+            VolumeSize: 8
+            VolumeType: gp3
+      Tags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: AMiInfraConfig-Linux3
+      InstanceProfileName: !Ref InstanceProfileName
+      InstanceTypes:
+        - t3a.large
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      SnsTopicArn: arn:aws:sns:<region>:<account-ID>:<SNS-Name>
+      Tags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
+      ResourceTags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
+        Attachby: infraConfig
+      TerminateInstanceOnFailure: true
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: AmiDistributionConfig-Linux3
+      Description: DistributionConfiguration
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: amazon-linux2023-x86-{{ imagebuilder:buildDate }}
+            Description: The Amazon Linux 2023 AMI comes pre-installed with the CloudWatch Agent.
+            AmiTags:
+              Team: Platform
+              SourceAccountID: !Ref AWS::AccountId
+              Name: amazon-linux2023-x86
+              AMIStatus: Final
+            KmsKeyId: !Ref ExistingKmsKeyId
+      Tags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: ImagePipeline-Linux3
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      Status: ENABLED
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 90
+      # Schedule:
+      #   PipelineExecutionStartCondition: EXPRESSION_MATCH_ONLY
+      #   ScheduleExpression: cron(0 * * * ? *)
+      #   # PipelineExecutionStartCondition: EXPRESSION_MATCH_ONLY
+      #   # ScheduleExpression: rate(7 days) # Weekly build, change as needed
+      EnhancedImageMetadataEnabled: true
+      Tags:
+        Team: Platform
+        SourceAccountID: !Ref AWS::AccountId
